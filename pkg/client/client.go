@@ -170,7 +170,6 @@ func (authOpts AuthOpts) ToAuthOptions() gophercloud.AuthOptions {
 
 	// Persistent service, so we need to be able to renew tokens.
 	ao.AllowReauth = true
-	klog.Infof("AuthOptions = %+v\n", *ao)
 	return *ao
 }
 
