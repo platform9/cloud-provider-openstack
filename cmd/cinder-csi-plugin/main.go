@@ -33,6 +33,7 @@ import (
 
 var (
 	endpoint     string
+	regionName   string
 	nodeID       string
 	cloudconfig  []string
 	cluster      string
@@ -83,10 +84,12 @@ func main() {
 		klog.Fatalf("Unable to mark flag endpoint to be required: %v", err)
 	}
 
+	cmd.PersistentFlags().StringVar(&regionName, "region", "", "Region name")
 	cmd.PersistentFlags().StringSliceVar(&cloudconfig, "cloud-config", nil, "CSI driver cloud config. This option can be given multiple times")
-	if err := cmd.MarkPersistentFlagRequired("cloud-config"); err != nil {
-		klog.Fatalf("Unable to mark flag cloud-config to be required: %v", err)
-	}
+	// Make it optional will use internal hardcoded config if not provided
+	// if err := cmd.MarkPersistentFlagRequired("cloud-config"); err != nil {
+	// 	klog.Fatalf("Unable to mark flag cloud-config to be required: %v", err)
+	// }
 
 	cmd.PersistentFlags().StringVar(&cluster, "cluster", "", "The identifier of the cluster that the plugin is running in.")
 	cmd.PersistentFlags().StringVar(&httpEndpoint, "http-endpoint", "", "The TCP network address where the HTTP server for diagnostics, including metrics and leader election health check, will listen (example: `:8080`). The default is empty string, which means the server is disabled.")
@@ -100,7 +103,7 @@ func handle() {
 
 	// Initialize cloud
 	d := cinder.NewDriver(endpoint, cluster)
-	openstack.InitOpenStackProvider(cloudconfig, httpEndpoint)
+	openstack.InitOpenStackProvider(cloudconfig, regionName, httpEndpoint)
 	cloud, err := openstack.GetOpenStackProvider()
 	if err != nil {
 		klog.Warningf("Failed to GetOpenStackProvider: %v", err)
