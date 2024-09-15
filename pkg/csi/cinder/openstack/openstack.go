@@ -31,6 +31,7 @@ import (
 	gcfg "gopkg.in/gcfg.v1"
 	"k8s.io/cloud-provider-openstack/pkg/client"
 	"k8s.io/cloud-provider-openstack/pkg/metrics"
+	"k8s.io/cloud-provider-openstack/pkg/util"
 	"k8s.io/cloud-provider-openstack/pkg/util/metadata"
 	"k8s.io/component-base/metrics/legacyregistry"
 	"k8s.io/klog/v2"
@@ -168,7 +169,9 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 		klog.Errorf("GetConfigFromFiles %s failed with error: %v", configFiles, err)
 		return nil, err
 	}
-	updateConfigFromVars(&cfg)
+	if strings.ToLower(os.Getenv("USE_CLAYMORE")) == "true" {
+		updateConfigFromVars(&cfg)
+	}
 	logcfg(cfg)
 
 	provider, err := client.NewOpenStackClient(&cfg.Global, "cinder-csi-plugin", userAgentData...)
@@ -188,15 +191,21 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 	}
 
 	// Init Cinder ServiceClient
-	blockstorageclient, err := openstack.NewBlockStorageV1(provider, epOpts)
-	if err != nil {
-		return nil, err
+	var blockstorageclient *gophercloud.ServiceClient
+	if util.GetCloudTypeFromEnv() == "OSPC" {
+		blockstorageclient, err := openstack.NewBlockStorageV1(provider, epOpts)
+		if err != nil {
+			return nil, err
+		}
+		endpoint := blockstorageclient.Endpoint
+		endpoint = strings.Replace(endpoint, "v1", "v2", 1)
+		blockstorageclient.Endpoint = endpoint
+	} else {
+		blockstorageclient, err = openstack.NewBlockStorageV3(provider, epOpts)
+		if err != nil {
+			return nil, err
+		}
 	}
-
-	endpoint := blockstorageclient.Endpoint
-	endpoint = strings.Replace(endpoint, "v1", "v2", 1)
-	klog.Infof("Overriding endpoint %s with new endpoint %s\n", blockstorageclient.Endpoint, endpoint)
-	blockstorageclient.Endpoint = endpoint
 
 	// if no search order given, use default
 	if len(cfg.Metadata.SearchOrder) == 0 {
@@ -234,7 +243,9 @@ func (os *OpenStack) GetMetadataOpts() metadata.Opts {
 }
 
 func createCfgFile(filepath string, regionName string) error {
-	data := fmt.Sprintf(`[Global]
+	var data string
+	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		data = fmt.Sprintf(`[Global]
 auth-url=<redacted>
 username=<redacted>
 api-key=<redacted>
@@ -249,6 +260,24 @@ bs-version=v2
 [Networking]
 internal-network-name=private
 public-network-name=public`, regionName)
+	} else {
+		data = fmt.Sprintf(`[Global]
+auth-url=https://keystone.api.sjc3.rackspacecloud.com/v3/
+username=spot.rackspace@rackspace.com
+password=lalaparabolala
+region="%s"
+tenant-id=521b087a774d11efb8640242ac120002
+domain-name=rackspace_cloud_domain
+
+[LoadBalancer]
+
+[BlockStorage]
+bs-version=v2
+
+[Networking]
+internal-network-name=private
+public-network-name=public`, regionName)
+	}
 
 	return os.WriteFile(filepath, []byte(data), 0644)
 }

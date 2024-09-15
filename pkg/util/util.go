@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
@@ -20,6 +21,8 @@ import (
 type MyDuration struct {
 	time.Duration
 }
+
+const CloudTypeOSPC = "OSPC"
 
 // UnmarshalText is used to convert from text to Duration
 func (d *MyDuration) UnmarshalText(text []byte) error {
@@ -126,4 +129,14 @@ func GetAZFromTopology(topologyKey string, requirement *csi.TopologyRequirement)
 	}
 
 	return zone
+}
+
+func GetCloudTypeFromEnv() string {
+	defaultCloudType := CloudTypeOSPC
+
+	val := os.Getenv("CLOUD_TYPE")
+	if len(val) == 0 {
+		val = defaultCloudType
+	}
+	return val
 }

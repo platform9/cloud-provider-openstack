@@ -8,6 +8,9 @@ echo -e '/host/lib64\n/host/usr/lib64' > /etc/ld.so.conf.d/x86_64-linux-gnu.conf
 ln -s /host/lib/x86_64-linux-gnu/libisns-nocrypto.so.0 /lib/x86_64-linux-gnu/libisns-nocrypto.so.0
 ldconfig
 
+CLOUD_TYPE="${CLOUD_TYPE:-OSPC}"
+echo "USE_CLAYMORE: ${USE_CLAYMORE}"
+
 if [[ -z "${REGION}" ]]; then
   /bin/cinder-csi-plugin \
     --endpoint="$(echo "${CSI_ENDPOINT}" | xargs)" \
