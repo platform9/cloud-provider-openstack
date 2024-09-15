@@ -29,6 +29,7 @@ import (
 	"k8s.io/cloud-provider-openstack/pkg/autohealing/cloudprovider/openstack"
 	"k8s.io/cloud-provider-openstack/pkg/autohealing/config"
 	"k8s.io/cloud-provider-openstack/pkg/client"
+	"k8s.io/cloud-provider-openstack/pkg/util"
 )
 
 func registerOpenStack(cfg config.Config, kubeClient kubernetes.Interface) (cloudprovider.CloudProvider, error) {
@@ -66,14 +67,21 @@ func registerOpenStack(cfg config.Config, kubeClient kubernetes.Interface) (clou
 
 	// get cinder service client
 	var cinderClient *gophercloud.ServiceClient
-	cinderClient, err = gopenstack.NewBlockStorageV1(client, eoOpts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find Cinder service endpoint in the region %s: %v", cfg.OpenStack.Region, err)
-	}
 
-	endpoint := cinderClient.Endpoint
-	endpoint = strings.Replace(endpoint, "v1", "v2", 1)
-	cinderClient.Endpoint = endpoint
+	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		cinderClient, err = gopenstack.NewBlockStorageV1(client, eoOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find Cinder service endpoint in the region %s: %v", cfg.OpenStack.Region, err)
+		}
+		endpoint := cinderClient.Endpoint
+		endpoint = strings.Replace(endpoint, "v1", "v2", 1)
+		cinderClient.Endpoint = endpoint
+	} else {
+		cinderClient, err = gopenstack.NewBlockStorageV3(client, eoOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to find Cinder service endpoint in the region %s: %v", cfg.OpenStack.Region, err)
+		}
+	}
 
 	p := openstack.CloudProvider{
 		KubeClient: kubeClient,
