@@ -84,6 +84,7 @@ func registerOpenStack(cfg config.Config, kubeClient kubernetes.Interface) (clou
 			return nil, fmt.Errorf("failed to find Cinder service endpoint in the region %s: %v", cfg.OpenStack.Region, err)
 		}
 	}
+	klog.Infof("Obtained blockstorage client for cloud", "cinderClient", cinderClient)
 
 	p := openstack.CloudProvider{
 		KubeClient: kubeClient,

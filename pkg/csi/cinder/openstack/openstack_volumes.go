@@ -84,6 +84,7 @@ func (os *OpenStack) ListVolumes(limit int, startingToken string) ([]volumes.Vol
 
 	opts := volumes.ListOpts{Limit: limit, Marker: startingToken}
 	mc := metrics.NewMetricContext("volume", "list")
+	klog.Infof("blockstorage client prior to volumes.List", "os.blockstorage", os.blockstorage)
 	err := volumes.List(os.blockstorage, opts).EachPage(func(page pagination.Page) (bool, error) {
 		var err error
 
@@ -136,6 +137,7 @@ func (os *OpenStack) GetVolumesByName(n string) ([]volumes.Volume, error) {
 			return nil, err
 		}
 	}
+	klog.Infof("Obtained blockstorage client for cloud", "blockstorageClient", blockstorageClient)
 
 	// cinder filtering in volumes list is available since 3.34 microversion
 	// https://docs.openstack.org/cinder/latest/contributor/api_microversion_history.html#id32
@@ -389,6 +391,7 @@ func (os *OpenStack) ExpandVolume(volumeID string, status string, newSize int) e
 				return err
 			}
 		}
+		klog.Infof("Obtained blockstorage client for cloud", "blockstorageClient", blockstorageClient)
 
 		// cinder online resize is available since 3.42 microversion
 		// https://docs.openstack.org/cinder/latest/contributor/api_microversion_history.html#id40
