@@ -24,6 +24,7 @@ import (
 	"github.com/gophercloud/gophercloud"
 	gopenstack "github.com/gophercloud/gophercloud/openstack"
 	"k8s.io/client-go/kubernetes"
+	klog "k8s.io/klog/v2"
 
 	"k8s.io/cloud-provider-openstack/pkg/autohealing/cloudprovider"
 	"k8s.io/cloud-provider-openstack/pkg/autohealing/cloudprovider/openstack"
@@ -69,6 +70,7 @@ func registerOpenStack(cfg config.Config, kubeClient kubernetes.Interface) (clou
 	var cinderClient *gophercloud.ServiceClient
 
 	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 		cinderClient, err = gopenstack.NewBlockStorageV1(client, eoOpts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to find Cinder service endpoint in the region %s: %v", cfg.OpenStack.Region, err)
@@ -82,6 +84,7 @@ func registerOpenStack(cfg config.Config, kubeClient kubernetes.Interface) (clou
 			return nil, fmt.Errorf("failed to find Cinder service endpoint in the region %s: %v", cfg.OpenStack.Region, err)
 		}
 	}
+	klog.Infof("Obtained blockstorage client for cloud", "cinderClient", cinderClient)
 
 	p := openstack.CloudProvider{
 		KubeClient: kubeClient,

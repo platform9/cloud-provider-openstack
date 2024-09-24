@@ -138,5 +138,6 @@ func GetCloudTypeFromEnv() string {
 	if len(val) == 0 {
 		val = defaultCloudType
 	}
+	klog.Infof("Environment CLOUD_TYPE : %s", val)
 	return val
 }
