@@ -18,11 +18,10 @@ package client
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
-	"k8s.io/cloud-provider-openstack/pkg/util"
+	klog "k8s.io/klog/v2"
 )
 
 // NewNetworkV2 creates a ServiceClient that may be used with the neutron v2 API
@@ -45,6 +44,7 @@ func NewComputeV2(provider *gophercloud.ProviderClient, eo *gophercloud.Endpoint
 
 // NewBlockStorageV1 creates a ServiceClient that may be used with the Cinder v1 API
 func NewBlockStorageV1(provider *gophercloud.ProviderClient, eo *gophercloud.EndpointOpts) (*gophercloud.ServiceClient, error) {
+	klog.Infof("creating blockstorage client v1 in service.go")
 	storage, err := openstack.NewBlockStorageV1(provider, *eo)
 	if err != nil {
 		return nil, fmt.Errorf("unable to find cinder v1 %s endpoint for region %s: %v", eo.Availability, eo.Region, err)
@@ -54,35 +54,12 @@ func NewBlockStorageV1(provider *gophercloud.ProviderClient, eo *gophercloud.End
 
 // NewBlockStorageV3 creates a ServiceClient that may be used with the Cinder v3 API
 func NewBlockStorageV3(provider *gophercloud.ProviderClient, eo *gophercloud.EndpointOpts) (*gophercloud.ServiceClient, error) {
+	klog.Infof("creating blockstorage client v3 in service.go")
 	storage, err := openstack.NewBlockStorageV3(provider, *eo)
 	if err != nil {
 		return nil, fmt.Errorf("unable to find cinder v3 %s endpoint for region %s: %v", eo.Availability, eo.Region, err)
 	}
 	return storage, nil
-}
-
-// NewBlockStorageBasedOnCloudType gets a ServiceClient that can be used with different Cinder version API
-// based on type of cloud
-func NewBlockStorageBasedOnCloudType(provider *gophercloud.ProviderClient, eo *gophercloud.EndpointOpts) (*gophercloud.ServiceClient, error) {
-	var cinderClient *gophercloud.ServiceClient
-	var err error
-
-	if util.GetCloudTypeFromEnv() == "OSPC" {
-		cinderClient, err = NewBlockStorageV1(provider, eo)
-		if err != nil {
-			return nil, err
-		}
-		endpoint := cinderClient.Endpoint
-		endpoint = strings.Replace(endpoint, "v1", "v2", 1)
-		cinderClient.Endpoint = endpoint
-	} else {
-		cinderClient, err = NewBlockStorageV3(provider, eo)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return cinderClient, nil
 }
 
 // NewLoadBalancerV2 creates a ServiceClient that may be used with the Neutron LBaaS v2 API

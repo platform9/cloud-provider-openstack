@@ -192,19 +192,22 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 
 	// Init Cinder ServiceClient
 	var blockstorageclient *gophercloud.ServiceClient
-	if util.GetCloudTypeFromEnv() == "OSPC" {
-		blockstorageclient, err := openstack.NewBlockStorageV1(provider, epOpts)
+	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating blockstorage client v1 for OSPC cloud")
+		blockstorageclient, err = openstack.NewBlockStorageV1(provider, epOpts)
 		if err != nil {
 			return nil, err
 		}
 		endpoint := blockstorageclient.Endpoint
 		endpoint = strings.Replace(endpoint, "v1", "v2", 1)
 		blockstorageclient.Endpoint = endpoint
+		klog.Infof("Obtained blockstorage client v1 for OSPC cloud", "blockstorageclient", blockstorageclient)
 	} else {
 		blockstorageclient, err = openstack.NewBlockStorageV3(provider, epOpts)
 		if err != nil {
 			return nil, err
 		}
+		klog.Infof("Obtained blockstorage client v3", "blockstorageclient", blockstorageclient)
 	}
 
 	// if no search order given, use default
@@ -212,6 +215,7 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 		cfg.Metadata.SearchOrder = fmt.Sprintf("%s,%s", metadata.ConfigDriveID, metadata.MetadataID)
 	}
 	// Init OpenStack
+	klog.Infof("Using blockstorage client for cloud", "blockstorageclient", blockstorageclient)
 	OsInstance = &OpenStack{
 		compute:      computeclient,
 		blockstorage: blockstorageclient,
@@ -245,6 +249,8 @@ func (os *OpenStack) GetMetadataOpts() metadata.Opts {
 func createCfgFile(filepath string, regionName string) error {
 	var data string
 	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating cloud conf for OSPC cloud")
+
 		data = fmt.Sprintf(`[Global]
 auth-url=<redacted>
 username=<redacted>

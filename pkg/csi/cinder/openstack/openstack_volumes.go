@@ -122,6 +122,7 @@ func (os *OpenStack) GetVolumesByName(n string) ([]volumes.Volume, error) {
 	var err error
 
 	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 		blockstorageClient, err = openstack.NewBlockStorageV1(os.blockstorage.ProviderClient, os.epOpts)
 		if err != nil {
 			return nil, err
@@ -135,6 +136,7 @@ func (os *OpenStack) GetVolumesByName(n string) ([]volumes.Volume, error) {
 			return nil, err
 		}
 	}
+	klog.Infof("Obtained blockstorage client for cloud", "blockstorageClient", blockstorageClient)
 
 	// cinder filtering in volumes list is available since 3.34 microversion
 	// https://docs.openstack.org/cinder/latest/contributor/api_microversion_history.html#id32
@@ -374,6 +376,7 @@ func (os *OpenStack) ExpandVolume(volumeID string, status string, newSize int) e
 		var err error
 
 		if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+			klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 			blockstorageClient, err = openstack.NewBlockStorageV1(os.blockstorage.ProviderClient, os.epOpts)
 			if err != nil {
 				return err
@@ -387,6 +390,7 @@ func (os *OpenStack) ExpandVolume(volumeID string, status string, newSize int) e
 				return err
 			}
 		}
+		klog.Infof("Obtained blockstorage client for cloud", "blockstorageClient", blockstorageClient)
 
 		// cinder online resize is available since 3.42 microversion
 		// https://docs.openstack.org/cinder/latest/contributor/api_microversion_history.html#id40
