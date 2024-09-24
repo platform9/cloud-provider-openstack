@@ -23,6 +23,7 @@ import (
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"k8s.io/cloud-provider-openstack/pkg/util"
+	klog "k8s.io/klog/v2"
 )
 
 // NewNetworkV2 creates a ServiceClient that may be used with the neutron v2 API
@@ -67,7 +68,8 @@ func NewBlockStorageBasedOnCloudType(provider *gophercloud.ProviderClient, eo *g
 	var cinderClient *gophercloud.ServiceClient
 	var err error
 
-	if util.GetCloudTypeFromEnv() == "OSPC" {
+	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 		cinderClient, err = NewBlockStorageV1(provider, eo)
 		if err != nil {
 			return nil, err

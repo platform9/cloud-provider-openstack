@@ -122,6 +122,7 @@ func (os *OpenStack) GetVolumesByName(n string) ([]volumes.Volume, error) {
 	var err error
 
 	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 		blockstorageClient, err = openstack.NewBlockStorageV1(os.blockstorage.ProviderClient, os.epOpts)
 		if err != nil {
 			return nil, err
@@ -374,6 +375,7 @@ func (os *OpenStack) ExpandVolume(volumeID string, status string, newSize int) e
 		var err error
 
 		if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+			klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 			blockstorageClient, err = openstack.NewBlockStorageV1(os.blockstorage.ProviderClient, os.epOpts)
 			if err != nil {
 				return err

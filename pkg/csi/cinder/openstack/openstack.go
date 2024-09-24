@@ -192,7 +192,8 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 
 	// Init Cinder ServiceClient
 	var blockstorageclient *gophercloud.ServiceClient
-	if util.GetCloudTypeFromEnv() == "OSPC" {
+	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating blockstorage client v1 for OSPC cloud")
 		blockstorageclient, err := openstack.NewBlockStorageV1(provider, epOpts)
 		if err != nil {
 			return nil, err
@@ -245,6 +246,8 @@ func (os *OpenStack) GetMetadataOpts() metadata.Opts {
 func createCfgFile(filepath string, regionName string) error {
 	var data string
 	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
+		klog.Infof("Creating cloud conf for OSPC cloud")
+
 		data = fmt.Sprintf(`[Global]
 auth-url=<redacted>
 username=<redacted>
