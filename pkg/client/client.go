@@ -138,7 +138,6 @@ func (authOpts AuthOpts) ToAuthOptions() gophercloud.AuthOptions {
 			authOpts.Username, authOpts.APIKey)
 	}
 
-	fmt.Printf("authOpts RAJENDRA line no 141 - %+v \n", authOpts)
 	opts := clientconfig.ClientOpts{
 		// this is needed to disable the clientconfig.AuthOptions func env detection
 		EnvPrefix: "_",
@@ -162,7 +161,6 @@ func (authOpts AuthOpts) ToAuthOptions() gophercloud.AuthOptions {
 			ApplicationCredentialSecret: authOpts.ApplicationCredentialSecret,
 		},
 	}
-	fmt.Printf("opts RAJENDRA line no 165 - %+v \n", opts.AuthInfo)
 
 	ao, err := clientconfig.AuthOptions(&opts)
 	if err != nil {
@@ -172,8 +170,6 @@ func (authOpts AuthOpts) ToAuthOptions() gophercloud.AuthOptions {
 
 	// Persistent service, so we need to be able to renew tokens.
 	ao.AllowReauth = true
-	ao.DomainName = authOpts.DomainName
-	fmt.Printf("RAJENDRA ao line no 175 - %+v \n", ao)
 	return *ao
 }
 
@@ -318,10 +314,7 @@ func NewOpenStackClient(cfg *AuthOpts, userAgent string, extraUserAgent ...strin
 
 		return provider, err
 	}
-	fmt.Printf("cfg RAJENDRA Line 317 - %+v \n", cfg)
 	opts := cfg.ToAuthOptions()
-	fmt.Printf("opts RAJENDRA line 319 - %+v \n", opts.DomainName)
 	err = openstack.Authenticate(provider, opts)
-	fmt.Printf("error  RAJENDRA line 323 - %+v \n", err)
 	return provider, err
 }

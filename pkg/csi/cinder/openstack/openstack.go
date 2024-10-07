@@ -149,13 +149,6 @@ func InitOpenStackProvider(cfgFiles []string, httpEndpoint string) {
 			klog.Infof("metrics available in %q", httpEndpoint)
 		}()
 	}
-	// if len(cfgFiles) == 0 {
-	// 	klog.Infof("Using internal cloud config file: %s", cfgFiles)
-	// 	if err := createCfgFile(configFiles[0], regionName); err != nil {
-	// 		klog.Fatalf("Failed to create cloud config file: %v", err)
-	// 	}
-	// 	return
-	// }
 	klog.Infof("Using provided cloud config files: %s", cfgFiles)
 	configFiles = cfgFiles
 	klog.V(2).Infof("InitOpenStackProvider configFiles: %s", configFiles)
@@ -170,21 +163,17 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 		return nil, err
 	}
 	logcfg(cfg)
-	fmt.Printf("cfg RAJENDRA - %+v \n", cfg)
 	provider, err := client.NewOpenStackClient(&cfg.Global, "cinder-csi-plugin", userAgentData...)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("provider RAJENDRA - %+v \n", provider)
 	epOpts := gophercloud.EndpointOpts{
 		Region:       cfg.Global.Region,
 		Availability: cfg.Global.EndpointType,
 	}
-	fmt.Printf("epOpts RAJENDRA - %+v \n", epOpts)
 	// Init Nova ServiceClient
 	computeclient, err := openstack.NewComputeV2(provider, epOpts)
 	if err != nil {
-		fmt.Printf("Error in create compute v2 client RAJENDRA - %+v \n", err)
 		return nil, err
 	}
 
@@ -201,14 +190,11 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 		blockstorageclient.Endpoint = endpoint
 		klog.Infof("Obtained blockstorage client v1 for OSPC cloud", "blockstorageclient", blockstorageclient)
 	} else {
-		fmt.Printf("ELSE RAJENDRA")
 		blockstorageclient, err = openstack.NewBlockStorageV3(provider, epOpts)
 		if err != nil {
-			fmt.Printf("Error in create v3 block client RAJENDRA - %+v \n", err)
 			return nil, err
 		}
 		klog.Infof("Obtained blockstorage client v3", "blockstorageclient", blockstorageclient)
-		fmt.Printf("Obtained blockstorage client v3", "blockstorageclient", blockstorageclient)
 	}
 
 	// if no search order given, use default
@@ -246,45 +232,3 @@ func GetOpenStackProvider() (IOpenStack, error) {
 func (os *OpenStack) GetMetadataOpts() metadata.Opts {
 	return os.metadataOpts
 }
-
-// func createCfgFile(filepath string, regionName string) error {
-// 	var data string
-// 	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
-// 		klog.Infof("Creating cloud conf for OSPC cloud")
-
-// 		data = fmt.Sprintf(`[Global]
-// auth-url=<redacted>
-// username=<redacted>
-// api-key=<redacted>
-// region="%s"
-// tenant-id=<redacted>
-
-// [LoadBalancer]
-
-// [BlockStorage]
-// bs-version=v2
-
-// [Networking]
-// internal-network-name=private
-// public-network-name=public`, regionName)
-// 	} else {
-// 		data = fmt.Sprintf(`[Global]
-// auth-url=https://keystone.api.sjc3.rackspacecloud.com/v3/
-// username=spot.rackspace@rackspace.com
-// password=lalaparabolala
-// region="%s"
-// tenant-id=521b087a774d11efb8640242ac120002
-// domain-name=rackspace_cloud_domain
-
-// [LoadBalancer]
-
-// [BlockStorage]
-// bs-version=v2
-
-// [Networking]
-// internal-network-name=private
-// public-network-name=public`, regionName)
-// 	}
-
-// 	return os.WriteFile(filepath, []byte(data), 0644)
-// }
