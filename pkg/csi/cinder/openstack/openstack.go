@@ -167,10 +167,12 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	epOpts := gophercloud.EndpointOpts{
 		Region:       cfg.Global.Region,
 		Availability: cfg.Global.EndpointType,
 	}
+
 	// Init Nova ServiceClient
 	computeclient, err := openstack.NewComputeV2(provider, epOpts)
 	if err != nil {
