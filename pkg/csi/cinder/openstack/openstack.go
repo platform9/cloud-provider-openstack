@@ -136,7 +136,7 @@ const defaultMaxVolAttachLimit int64 = 256
 var OsInstance IOpenStack
 var configFiles = []string{"/etc/cloud.conf"}
 
-func InitOpenStackProvider(cfgFiles []string, regionName string, httpEndpoint string) {
+func InitOpenStackProvider(cfgFiles []string, httpEndpoint string) {
 	metrics.RegisterMetrics("cinder-csi")
 	if httpEndpoint != "" {
 		mux := http.NewServeMux()
@@ -148,13 +148,6 @@ func InitOpenStackProvider(cfgFiles []string, regionName string, httpEndpoint st
 			}
 			klog.Infof("metrics available in %q", httpEndpoint)
 		}()
-	}
-	if len(cfgFiles) == 0 {
-		klog.Infof("Using internal cloud config file: %s", cfgFiles)
-		if err := createCfgFile(configFiles[0], regionName); err != nil {
-			klog.Fatalf("Failed to create cloud config file: %v", err)
-		}
-		return
 	}
 	klog.Infof("Using provided cloud config files: %s", cfgFiles)
 	configFiles = cfgFiles
@@ -169,11 +162,7 @@ func CreateOpenStackProvider() (IOpenStack, error) {
 		klog.Errorf("GetConfigFromFiles %s failed with error: %v", configFiles, err)
 		return nil, err
 	}
-	if strings.ToLower(os.Getenv("USE_CLAYMORE")) == "true" {
-		updateConfigFromVars(&cfg)
-	}
 	logcfg(cfg)
-
 	provider, err := client.NewOpenStackClient(&cfg.Global, "cinder-csi-plugin", userAgentData...)
 	if err != nil {
 		return nil, err
@@ -244,46 +233,4 @@ func GetOpenStackProvider() (IOpenStack, error) {
 // GetMetadataOpts returns metadataopts
 func (os *OpenStack) GetMetadataOpts() metadata.Opts {
 	return os.metadataOpts
-}
-
-func createCfgFile(filepath string, regionName string) error {
-	var data string
-	if util.GetCloudTypeFromEnv() == util.CloudTypeOSPC {
-		klog.Infof("Creating cloud conf for OSPC cloud")
-
-		data = fmt.Sprintf(`[Global]
-auth-url=<redacted>
-username=<redacted>
-api-key=<redacted>
-region="%s"
-tenant-id=<redacted>
-
-[LoadBalancer]
-
-[BlockStorage]
-bs-version=v2
-
-[Networking]
-internal-network-name=private
-public-network-name=public`, regionName)
-	} else {
-		data = fmt.Sprintf(`[Global]
-auth-url=https://keystone.api.sjc3.rackspacecloud.com/v3/
-username=spot.rackspace@rackspace.com
-password=lalaparabolala
-region="%s"
-tenant-id=521b087a774d11efb8640242ac120002
-domain-name=rackspace_cloud_domain
-
-[LoadBalancer]
-
-[BlockStorage]
-bs-version=v2
-
-[Networking]
-internal-network-name=private
-public-network-name=public`, regionName)
-	}
-
-	return os.WriteFile(filepath, []byte(data), 0644)
 }

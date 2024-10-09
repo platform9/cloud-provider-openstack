@@ -314,9 +314,7 @@ func NewOpenStackClient(cfg *AuthOpts, userAgent string, extraUserAgent ...strin
 
 		return provider, err
 	}
-
 	opts := cfg.ToAuthOptions()
 	err = openstack.Authenticate(provider, opts)
-
 	return provider, err
 }
