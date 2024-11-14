@@ -15,10 +15,12 @@ if [[ -z "${REGION}" ]]; then
   /bin/cinder-csi-plugin \
     --endpoint="$(echo "${CSI_ENDPOINT}" | xargs)" \
     --cloud-config="$(echo "${CLOUD_CONFIG}" | xargs)" \
+    --cluster="$(echo "${CLUSTER_NAME}" | xargs)" \
     --v=5
 else
   /bin/cinder-csi-plugin \
     --endpoint="$(echo "${CSI_ENDPOINT}" | xargs)" \
     --region="$(echo "${REGION}" | xargs)" \
+    --cluster="$(echo "${CLUSTER_NAME}" | xargs)" \
     --v=5
 fi
