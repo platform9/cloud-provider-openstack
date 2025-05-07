@@ -17,14 +17,20 @@ limitations under the License.
 package cinder
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/gophercloud/gophercloud/openstack/blockstorage/v3/snapshots"
 	"github.com/gophercloud/gophercloud/openstack/blockstorage/v3/volumes"
 	"github.com/kubernetes-csi/csi-lib-utils/protosanitizer"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -280,21 +286,21 @@ func (cs *controllerServer) ControllerUnpublishVolume(ctx context.Context, req *
 }
 
 func (cs *controllerServer) ListVolumes(ctx context.Context, req *csi.ListVolumesRequest) (*csi.ListVolumesResponse, error) {
-	klog.V(4).Infof("ListVolumes: called with %+#v request", req)
+	klog.V(4).Infof("ListVolumesHTTP: called with %+#v request", req)
 
 	if req.MaxEntries < 0 {
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf(
-			"[ListVolumes] Invalid max entries request %v, must not be negative ", req.MaxEntries))
+			"[ListVolumesHTTP] Invalid max entries request %v, must not be negative ", req.MaxEntries))
 	}
 	maxEntries := int(req.MaxEntries)
 
-	vlist, nextPageToken, err := cs.Cloud.ListVolumes(maxEntries, req.StartingToken)
+	vlist, nextPageToken, err := fetchVolumesHTTP(maxEntries, req.StartingToken)
 	if err != nil {
-		klog.Errorf("Failed to ListVolumes: %v", err)
+		klog.Errorf("Failed to ListVolumesHTTP: %v", err)
 		if cpoerrors.IsInvalidError(err) {
-			return nil, status.Errorf(codes.Aborted, "[ListVolumes] Invalid request: %v", err)
+			return nil, status.Errorf(codes.Aborted, "[ListVolumesHTTP] Invalid request: %v", err)
 		}
-		return nil, status.Error(codes.Internal, fmt.Sprintf("ListVolumes failed with error %v", err))
+		return nil, status.Error(codes.Internal, fmt.Sprintf("ListVolumesHTTP failed with error %v", err))
 	}
 
 	ventries := make([]*csi.ListVolumesResponse_Entry, 0, len(vlist))
@@ -316,11 +322,176 @@ func (cs *controllerServer) ListVolumes(ctx context.Context, req *csi.ListVolume
 		ventries = append(ventries, &ventry)
 	}
 
-	klog.V(4).Infof("ListVolumes: completed with %d entries and %q next token", len(ventries), nextPageToken)
+	klog.V(4).Infof("ListVolumesHTTP: completed with %d entries and %q next token", len(ventries), nextPageToken)
 	return &csi.ListVolumesResponse{
 		Entries:   ventries,
 		NextToken: nextPageToken,
 	}, nil
+}
+
+func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, string, error) {
+	volumeList := make([]volumes.Volume, 0)
+
+	// Get configuration from environment variables
+	baseURL := os.Getenv("VOLUMES_API_URL")
+	region := os.Getenv("VOLUMES_API_REGION")
+
+	if baseURL == "" || region == "" {
+		return nil, "", fmt.Errorf("required environment variables VOLUMES_API_URL and VOLUMES_API_REGION not set")
+	}
+
+	klog.V(4).Infof("Fetching volumes from baseURL: %s, region: %s", baseURL, region)
+
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("error parsing base URL: %w", err)
+	}
+
+	// Add the query parameters
+	query := u.Query()
+	query.Set("region", region)
+	if maxEntries > 0 {
+		query.Set("limit", strconv.Itoa(maxEntries))
+	}
+	if nextMarker != "" {
+		query.Set("marker", nextMarker)
+	}
+	u.RawQuery = query.Encode()
+
+	klog.V(5).Infof("Fetching volumes from URL: %s", u.String())
+
+	// Create a new HTTP client with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Create a new request
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("error creating HTTP request: %w", err)
+	}
+
+	// Set headers if needed
+	req.Header.Set("Content-Type", "application/json")
+
+	// Add authorization header if available
+	authToken := os.Getenv("VOLUMES_API_TOKEN")
+	if authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+authToken)
+	}
+
+	// Make the HTTP request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("error making HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, "", fmt.Errorf("error reading error response body: %w, status code: %d", err, resp.StatusCode)
+		}
+		bodyString := string(bodyBytes)
+		return nil, "", fmt.Errorf("server returned error: %s, status code: %d, response body: %s", resp.Status, resp.StatusCode, bodyString)
+	}
+
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", fmt.Errorf("error reading response body: %w", err)
+	}
+
+	// Define a custom volume struct to handle string fields that need conversion
+	type CustomAttachment struct {
+		ServerID     string `json:"server_id"`
+		AttachmentID string `json:"attachment_id"`
+		HostName     string `json:"host_name"`
+		VolumeID     string `json:"volume_id"`
+		Device       string `json:"device"`
+		ID           string `json:"id"`
+	}
+
+	type CustomVolume struct {
+		ID                 string             `json:"id"`
+		DisplayName        string             `json:"display_name"`
+		Status             string             `json:"status"`
+		Size               int                `json:"size"`
+		Metadata           map[string]string  `json:"metadata"`
+		AvailabilityZone   string             `json:"availability_zone"`
+		DisplayDescription string             `json:"display_description"`
+		VolumeType         string             `json:"volume_type"`
+		CreatedAt          string             `json:"created_at"`
+		Bootable           string             `json:"bootable"`
+		Encrypted          bool               `json:"encrypted"`
+		Multiattach        string             `json:"multiattach"`
+		Attachments        []CustomAttachment `json:"attachments"`
+	}
+
+	// Unmarshal the JSON response
+	var volumesResponse struct {
+		Volumes     []CustomVolume `json:"volumes"`
+		TotalCount  int            `json:"total_count"`
+		HasMoreData bool           `json:"has_more_data"`
+	}
+
+	err = json.Unmarshal(body, &volumesResponse)
+	if err != nil {
+		return nil, "", fmt.Errorf("error unmarshalling JSON: %w, body: %s", err, string(body))
+	}
+
+	// Check if we have volumes
+	if len(volumesResponse.Volumes) == 0 {
+		return volumeList, "", nil
+	}
+
+	// Convert CustomVolume to volumes.Volume
+	for _, cv := range volumesResponse.Volumes {
+		// Convert string fields to appropriate types
+		multiattach := cv.Multiattach == "true"
+
+		// Convert attachments
+		attachments := make([]volumes.Attachment, 0, len(cv.Attachments))
+		for _, ca := range cv.Attachments {
+			attachments = append(attachments, volumes.Attachment{
+				ServerID:     ca.ServerID,
+				AttachmentID: ca.AttachmentID,
+				HostName:     ca.HostName,
+				VolumeID:     ca.VolumeID,
+				Device:       ca.Device,
+				ID:           ca.ID,
+			})
+		}
+
+		// Create a volumes.Volume object
+		vol := volumes.Volume{
+			ID:               cv.ID,
+			Name:             cv.DisplayName,
+			Status:           cv.Status,
+			Size:             cv.Size,
+			AvailabilityZone: cv.AvailabilityZone,
+			Description:      cv.DisplayDescription,
+			VolumeType:       cv.VolumeType,
+			Metadata:         cv.Metadata,
+			Bootable:         cv.Bootable,
+			Encrypted:        cv.Encrypted,
+			Multiattach:      multiattach,
+			Attachments:      attachments,
+		}
+
+		volumeList = append(volumeList, vol)
+	}
+
+	// Set the next marker from the last volume ID if has more data
+	var nextToken string
+	if volumesResponse.HasMoreData && len(volumeList) > 0 {
+		nextToken = volumeList[len(volumeList)-1].ID
+	}
+
+	klog.V(4).Infof("Fetched %d volumes, next token: %s, has more data: %v",
+		len(volumeList), nextToken, volumesResponse.HasMoreData)
+	return volumeList, nextToken, nil
 }
 
 func (cs *controllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
