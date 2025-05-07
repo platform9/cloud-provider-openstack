@@ -371,14 +371,17 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 		return nil, "", fmt.Errorf("error creating HTTP request: %w", err)
 	}
 
-	// Set headers if needed
+	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-
-	// Add authorization header if available
+	
+	// Add authorization header
 	authToken := os.Getenv("VOLUMES_API_TOKEN")
-	if authToken != "" {
-		req.Header.Set("Authorization", "Bearer "+authToken)
+	if authToken == "" {
+		// If not set in environment, use a default or return an error
+		return nil, "", fmt.Errorf("required environment variable VOLUMES_API_TOKEN not set")
 	}
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	klog.V(5).Infof("Added Authorization header with Bearer token")
 
 	// Make the HTTP request
 	resp, err := client.Do(req)
