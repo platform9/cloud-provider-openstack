@@ -18,6 +18,8 @@ package cinder
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -34,7 +36,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
-
 	"k8s.io/cloud-provider-openstack/pkg/csi/cinder/openstack"
 	"k8s.io/cloud-provider-openstack/pkg/util"
 	cpoerrors "k8s.io/cloud-provider-openstack/pkg/util/errors"
@@ -329,18 +330,38 @@ func (cs *controllerServer) ListVolumes(ctx context.Context, req *csi.ListVolume
 	}, nil
 }
 
+func generateRequestID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		// If we fail to generate random bytes, use timestamp as fallback
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(bytes)
+}
+
 func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, string, error) {
 	volumeList := make([]volumes.Volume, 0)
+
+	// Generate a unique request ID
+	requestID := generateRequestID()
 
 	// Get configuration from environment variables
 	baseURL := os.Getenv("VOLUMES_API_URL")
 	region := os.Getenv("VOLUMES_API_REGION")
+	clusterName := os.Getenv("CLUSTER_NAME")
 
 	if baseURL == "" || region == "" {
 		return nil, "", fmt.Errorf("required environment variables VOLUMES_API_URL and VOLUMES_API_REGION not set")
 	}
 
-	klog.V(4).Infof("Fetching volumes from baseURL: %s, region: %s", baseURL, region)
+	if clusterName == "" {
+		// Use a default cluster name if not provided
+		clusterName = "unknown-cluster"
+		klog.V(4).Infof("CLUSTER_NAME environment variable not set, using default: %s", clusterName)
+	}
+
+	klog.V(4).Infof("Fetching volumes from baseURL: %s, region: %s, requestID: %s, cluster: %s",
+		baseURL, region, requestID, clusterName)
 
 	u, err := url.Parse(baseURL)
 	if err != nil {
@@ -373,7 +394,9 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 
 	// Set headers
 	req.Header.Set("Content-Type", "application/json")
-	
+	req.Header.Set("X-Request-ID", requestID)
+	req.Header.Set("X-Cluster-Name", clusterName)
+
 	// Add authorization header
 	authToken := os.Getenv("VOLUMES_API_TOKEN")
 	if authToken == "" {
@@ -381,7 +404,7 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 		return nil, "", fmt.Errorf("required environment variable VOLUMES_API_TOKEN not set")
 	}
 	req.Header.Set("Authorization", "Bearer "+authToken)
-	klog.V(5).Infof("Added Authorization header with Bearer token")
+	klog.V(5).Infof("Added Authorization header with Bearer token and request tracking headers")
 
 	// Make the HTTP request
 	resp, err := client.Do(req)
