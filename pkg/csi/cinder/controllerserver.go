@@ -197,8 +197,7 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 		return nil, status.Error(codes.InvalidArgument, "[ControllerPublishVolume] Volume capability must be provided")
 	}
 
-	//_, err := cs.Cloud.GetVolume(volumeID)
-	_, err := fetchVolumeByIDHTTP(volumeID)
+	_, err := cs.Cloud.GetVolume(volumeID)
 	if err != nil {
 		if cpoerrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "[ControllerPublishVolume] Volume %s not found", volumeID)
@@ -453,7 +452,7 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 		CreatedAt          string             `json:"created_at"`
 		Bootable           string             `json:"bootable"`
 		Encrypted          bool               `json:"encrypted"`
-		Multiattach        string             `json:"multiattach"`
+		Multiattach        bool               `json:"multiattach"`
 		Attachments        []CustomAttachment `json:"attachments"`
 	}
 
@@ -477,7 +476,7 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 	// Convert CustomVolume to volumes.Volume
 	for _, cv := range volumesResponse.Volumes {
 		// Convert string fields to appropriate types
-		multiattach := cv.Multiattach == "true"
+		multiattach := cv.Multiattach == false
 
 		// Convert attachments
 		attachments := make([]volumes.Attachment, 0, len(cv.Attachments))
@@ -523,7 +522,6 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 }
 
 func fetchVolumeByIDHTTP(volumeID string) (*volumes.Volume, error) {
-	fmt.Printf("fetchVolumeByIDHTTP....")
 	// Generate a unique request ID
 	requestID := generateRequestID()
 
@@ -634,7 +632,7 @@ func fetchVolumeByIDHTTP(volumeID string) (*volumes.Volume, error) {
 		CreatedAt          string             `json:"created_at"`
 		Bootable           string             `json:"bootable"`
 		Encrypted          bool               `json:"encrypted"`
-		Multiattach        string             `json:"multiattach"`
+		Multiattach        bool               `json:"multiattach"`
 		Attachments        []CustomAttachment `json:"attachments"`
 	}
 
@@ -651,7 +649,7 @@ func fetchVolumeByIDHTTP(volumeID string) (*volumes.Volume, error) {
 	cv := volumeResponse.Volume
 
 	// Convert string fields to appropriate types
-	multiattach := cv.Multiattach == "true"
+	multiattach := cv.Multiattach == false
 
 	// Convert attachments
 	attachments := make([]volumes.Attachment, 0, len(cv.Attachments))
