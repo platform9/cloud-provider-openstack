@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"time"
 
@@ -196,7 +197,8 @@ func (cs *controllerServer) ControllerPublishVolume(ctx context.Context, req *cs
 		return nil, status.Error(codes.InvalidArgument, "[ControllerPublishVolume] Volume capability must be provided")
 	}
 
-	_, err := cs.Cloud.GetVolume(volumeID)
+	//_, err := cs.Cloud.GetVolume(volumeID)
+	_, err := fetchVolumeByIDHTTP(volumeID)
 	if err != nil {
 		if cpoerrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "[ControllerPublishVolume] Volume %s not found", volumeID)
@@ -520,6 +522,170 @@ func fetchVolumesHTTP(maxEntries int, nextMarker string) ([]volumes.Volume, stri
 	return volumeList, nextToken, nil
 }
 
+func fetchVolumeByIDHTTP(volumeID string) (*volumes.Volume, error) {
+	fmt.Printf("fetchVolumeByIDHTTP....")
+	// Generate a unique request ID
+	requestID := generateRequestID()
+
+	// Get configuration from environment variables
+	baseURL := os.Getenv("VOLUMES_API_URL")
+	region := os.Getenv("VOLUMES_API_REGION")
+	clusterName := os.Getenv("CLUSTER_NAME")
+
+	if baseURL == "" || region == "" {
+		return nil, fmt.Errorf("required environment variables VOLUMES_API_URL and VOLUMES_API_REGION not set")
+	}
+
+	if clusterName == "" {
+		// Use a default cluster name if not provided
+		clusterName = "unknown-cluster"
+		klog.V(4).Infof("CLUSTER_NAME environment variable not set, using default: %s", clusterName)
+	}
+
+	klog.V(4).Infof("Fetching volume by ID from baseURL: %s, region: %s, requestID: %s, cluster: %s, volumeID: %s",
+		baseURL, region, requestID, clusterName, volumeID)
+
+	// Construct the URL for the specific volume
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing base URL: %w", err)
+	}
+
+	// Add the volume ID to the path
+	u.Path = path.Join(u.Path, volumeID)
+
+	// Add the query parameters
+	query := u.Query()
+	query.Set("region", region)
+	u.RawQuery = query.Encode()
+
+	klog.V(5).Infof("Fetching volume from URL: %s", u.String())
+
+	// Create a new HTTP client with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Create a new request
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating HTTP request: %w", err)
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", requestID)
+	req.Header.Set("X-Cluster-Name", clusterName)
+
+	// Add authorization header
+	authToken := os.Getenv("VOLUMES_API_TOKEN")
+	if authToken == "" {
+		// If not set in environment, return an error
+		return nil, fmt.Errorf("required environment variable VOLUMES_API_TOKEN not set")
+	}
+	req.Header.Set("Authorization", "Bearer "+authToken)
+	klog.V(5).Infof("Added Authorization header with Bearer token and request tracking headers")
+
+	// Make the HTTP request
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("error making HTTP request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check the response status code
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusNotFound {
+			return nil, cpoerrors.ErrNotFound
+		}
+		bodyBytes, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("error reading error response body: %w, status code: %d", err, resp.StatusCode)
+		}
+		bodyString := string(bodyBytes)
+		return nil, fmt.Errorf("server returned error: %s, status code: %d, response body: %s", resp.Status, resp.StatusCode, bodyString)
+	}
+
+	// Read the response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response body: %w", err)
+	}
+
+	// Define a custom volume struct to handle string fields that need conversion
+	type CustomAttachment struct {
+		ServerID     string `json:"server_id"`
+		AttachmentID string `json:"attachment_id"`
+		HostName     string `json:"host_name"`
+		VolumeID     string `json:"volume_id"`
+		Device       string `json:"device"`
+		ID           string `json:"id"`
+	}
+
+	type CustomVolume struct {
+		ID                 string             `json:"id"`
+		DisplayName        string             `json:"display_name"`
+		Status             string             `json:"status"`
+		Size               int                `json:"size"`
+		Metadata           map[string]string  `json:"metadata"`
+		AvailabilityZone   string             `json:"availability_zone"`
+		DisplayDescription string             `json:"display_description"`
+		VolumeType         string             `json:"volume_type"`
+		CreatedAt          string             `json:"created_at"`
+		Bootable           string             `json:"bootable"`
+		Encrypted          bool               `json:"encrypted"`
+		Multiattach        string             `json:"multiattach"`
+		Attachments        []CustomAttachment `json:"attachments"`
+	}
+
+	// Unmarshal the JSON response
+	var volumeResponse struct {
+		Volume CustomVolume `json:"volume"`
+	}
+
+	err = json.Unmarshal(body, &volumeResponse)
+	if err != nil {
+		return nil, fmt.Errorf("error unmarshalling JSON: %w, body: %s", err, string(body))
+	}
+
+	cv := volumeResponse.Volume
+
+	// Convert string fields to appropriate types
+	multiattach := cv.Multiattach == "true"
+
+	// Convert attachments
+	attachments := make([]volumes.Attachment, 0, len(cv.Attachments))
+	for _, ca := range cv.Attachments {
+		attachments = append(attachments, volumes.Attachment{
+			ServerID:     ca.ServerID,
+			AttachmentID: ca.AttachmentID,
+			HostName:     ca.HostName,
+			VolumeID:     ca.VolumeID,
+			Device:       ca.Device,
+			ID:           ca.ID,
+		})
+	}
+
+	// Create a volumes.Volume object
+	vol := &volumes.Volume{
+		ID:               cv.ID,
+		Name:             cv.DisplayName,
+		Status:           cv.Status,
+		Size:             cv.Size,
+		AvailabilityZone: cv.AvailabilityZone,
+		Description:      cv.DisplayDescription,
+		VolumeType:       cv.VolumeType,
+		Metadata:         cv.Metadata,
+		Bootable:         cv.Bootable,
+		Encrypted:        cv.Encrypted,
+		Multiattach:      multiattach,
+		Attachments:      attachments,
+	}
+
+	klog.V(4).Infof("Successfully fetched volume with ID: %s", volumeID)
+	return vol, nil
+}
+
 func (cs *controllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSnapshotRequest) (*csi.CreateSnapshotResponse, error) {
 	klog.V(4).Infof("CreateSnapshot: called with args %+v", protosanitizer.StripSecrets(*req))
 
@@ -726,7 +892,9 @@ func (cs *controllerServer) ValidateVolumeCapabilities(ctx context.Context, req 
 		return nil, status.Error(codes.InvalidArgument, "ValidateVolumeCapabilities Volume ID must be provided")
 	}
 
-	_, err := cs.Cloud.GetVolume(volumeID)
+	// _, err := cs.Cloud.GetVolume(volumeID)
+	// Use HTTP implementation instead of cs.Cloud.GetVolume
+	_, err := fetchVolumeByIDHTTP(volumeID)
 	if err != nil {
 		if cpoerrors.IsNotFound(err) {
 			return nil, status.Error(codes.NotFound, fmt.Sprintf("ValidateVolumeCapabiltites Volume %s not found", volumeID))
@@ -767,7 +935,8 @@ func (cs *controllerServer) ControllerGetVolume(ctx context.Context, req *csi.Co
 		return nil, status.Error(codes.InvalidArgument, "Volume ID not provided")
 	}
 
-	volume, err := cs.Cloud.GetVolume(volumeID)
+	//volume, err := cs.Cloud.GetVolume(volumeID)
+	volume, err := fetchVolumeByIDHTTP(volumeID)
 	if err != nil {
 		if cpoerrors.IsNotFound(err) {
 			return nil, status.Errorf(codes.NotFound, "Volume %s not found", volumeID)
