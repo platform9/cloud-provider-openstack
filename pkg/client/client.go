@@ -259,8 +259,16 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	reqID := uuid.New().String()
 	req.Header.Set("X-Request-ID", reqID)
 
-	req.Header.Set("X-Cluster", os.Getenv("CLUSTER_NAME"))
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("VOLUMES_API_TOKEN"))
+	token := os.Getenv("API_TOKEN")
+	if token == "" {
+		return nil, fmt.Errorf("API token not set")
+	}
+	clusterName := os.Getenv("CLUSTER_NAME")
+	if clusterName == "" {
+		return nil, fmt.Errorf("CLUSTER_NAME not set")
+	}
+	req.Header.Set("X-Cluster", clusterName)
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Request-ID", reqID)
 	// Add region as header if not already present
 	if t.Region != "" && req.Header.Get("X-Region") == "" {
