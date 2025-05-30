@@ -275,6 +275,21 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 		req.Header.Set("X-Region", t.Region)
 	}
 
+	// Extract volumeID from URL path and add as header only for operations that have a volumeID
+	// Skip for POST requests (like volume creation) where volumeID doesn't exist yet
+	if req.Method != "POST" {
+		pathParts := strings.Split(req.URL.Path, "/")
+		for i, part := range pathParts {
+			if part == "volumes" && i+1 < len(pathParts) {
+				volumeID := pathParts[i+1]
+				if volumeID != "" {
+					req.Header.Set("X-Volume-ID", volumeID)
+				}
+				break
+			}
+		}
+	}
+
 	// Log request
 	var reqBody []byte
 	var err error

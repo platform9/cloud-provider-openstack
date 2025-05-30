@@ -223,7 +223,44 @@ func (os *OpenStack) AttachVolume(instanceID, volumeID string) (string, error) {
 	return volume.ID, nil
 }
 
-// WaitDiskAttached waits for attched
+// GetVolumeAttachments retrieves the list of volume attachments for a server
+func (os *OpenStack) GetVolumeAttachments(instanceID string) ([]volumeattach.VolumeAttachment, error) {
+	mc := metrics.NewMetricContext("volume_attachment", "list")
+	pages, err := volumeattach.List(os.compute, instanceID).AllPages()
+	if mc.ObserveRequest(err) != nil {
+		return nil, fmt.Errorf("failed to get volume attachments for instance %s: %v", instanceID, err)
+	}
+	attachments, err := volumeattach.ExtractVolumeAttachments(pages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract volume attachments for instance %s: %v", instanceID, err)
+	}
+	return attachments, nil
+}
+
+// isVolumeAttachedToInstance checks if a volume is attached to a Nova instance
+func (os *OpenStack) isVolumeAttachedToInstance(instanceID, volumeID string) (bool, error) {
+	attachments, err := os.GetVolumeAttachments(instanceID)
+	if err != nil {
+		if cpoerrors.IsNotFound(err) {
+			klog.Warningf("Instance %s not found while checking volume %s attachment", instanceID, volumeID)
+			return false, fmt.Errorf("instance %s not found", instanceID)
+		}
+		klog.Errorf("Failed to get volume attachments for instance %s: %v", instanceID, err)
+		return false, err
+	}
+
+	for _, att := range attachments {
+		if att.VolumeID == volumeID {
+			klog.V(2).Infof("Volume %s is found in instance %s attached volumes list", volumeID, instanceID)
+			return true, nil
+		}
+	}
+
+	klog.V(2).Infof("Volume %s is not found in instance %s attached volumes list", volumeID, instanceID)
+	return false, nil
+}
+
+// WaitDiskAttached waits for volume to be attached to the instance
 func (os *OpenStack) WaitDiskAttached(instanceID string, volumeID string) error {
 	backoff := wait.Backoff{
 		Duration: diskAttachInitDelay,
@@ -232,17 +269,35 @@ func (os *OpenStack) WaitDiskAttached(instanceID string, volumeID string) error 
 	}
 
 	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
-		attached, err := os.diskIsAttached(instanceID, volumeID)
-		if err != nil && !cpoerrors.IsNotFound(err) {
-			// if this is a race condition indicate the volume is deleted
-			// during sleep phase, ignore the error and return attach=false
+		// Check volume attachment status using existing function
+		volumeAttached, err := os.diskIsAttached(instanceID, volumeID)
+		if err != nil {
+			klog.Errorf("Failed to check volume %s attachment status for instance %s: %v", volumeID, instanceID, err)
 			return false, err
 		}
-		return attached, nil
+		if !volumeAttached {
+			klog.V(2).Infof("Volume %s is not yet attached to instance %s", volumeID, instanceID)
+			return false, nil
+		}
+
+		// Check Nova instance attachment status
+		instanceAttached, err := os.isVolumeAttachedToInstance(instanceID, volumeID)
+		if err != nil {
+			klog.Errorf("Failed to check instance %s attachment status for volume %s: %v", instanceID, volumeID, err)
+			return false, err
+		}
+		if !instanceAttached {
+			klog.V(2).Infof("Volume %s is not yet visible in instance %s attached volumes", volumeID, instanceID)
+			return false, nil
+		}
+
+		klog.V(2).Infof("Volume %s is successfully attached to instance %s", volumeID, instanceID)
+		return true, nil
 	})
 
 	if wait.Interrupted(err) {
 		err = fmt.Errorf("Volume %q failed to be attached within the alloted time", volumeID)
+		klog.Errorf("Volume attachment timeout: %v", err)
 	}
 
 	return err
@@ -313,7 +368,30 @@ func (os *OpenStack) DetachVolume(instanceID, volumeID string) error {
 	return nil
 }
 
-// WaitDiskDetached waits for detached
+// isVolumeDetachedFromInstance checks if a volume is detached from a Nova instance
+func (os *OpenStack) isVolumeDetachedFromInstance(instanceID, volumeID string) (bool, error) {
+	attachments, err := os.GetVolumeAttachments(instanceID)
+	if err != nil {
+		if cpoerrors.IsNotFound(err) {
+			klog.Warningf("Instance %s not found while checking volume %s detachment", instanceID, volumeID)
+			return false, fmt.Errorf("instance %s not found", instanceID)
+		}
+		klog.Errorf("Failed to get volume attachments for instance %s: %v", instanceID, err)
+		return false, err
+	}
+
+	for _, att := range attachments {
+		if att.VolumeID == volumeID {
+			klog.V(2).Infof("Volume %s is still found in instance %s attached volumes list", volumeID, instanceID)
+			return false, nil
+		}
+	}
+
+	klog.V(2).Infof("Volume %s is not found in instance %s attached volumes list", volumeID, instanceID)
+	return true, nil
+}
+
+// WaitDiskDetached waits for volume to be detached from the instance
 func (os *OpenStack) WaitDiskDetached(instanceID string, volumeID string) error {
 	backoff := wait.Backoff{
 		Duration: diskDetachInitDelay,
@@ -322,15 +400,35 @@ func (os *OpenStack) WaitDiskDetached(instanceID string, volumeID string) error 
 	}
 
 	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
-		attached, err := os.diskIsAttached(instanceID, volumeID)
+		// Check volume detachment status using existing function
+		volumeAttached, err := os.diskIsAttached(instanceID, volumeID)
 		if err != nil {
+			klog.Errorf("Failed to check volume %s detachment status for instance %s: %v", volumeID, instanceID, err)
 			return false, err
 		}
-		return !attached, nil
+		if volumeAttached {
+			klog.V(2).Infof("Volume %s is still attached to instance %s", volumeID, instanceID)
+			return false, nil
+		}
+
+		// Check Nova instance detachment status
+		instanceDetached, err := os.isVolumeDetachedFromInstance(instanceID, volumeID)
+		if err != nil {
+			klog.Errorf("Failed to check instance %s detachment status for volume %s: %v", instanceID, volumeID, err)
+			return false, err
+		}
+		if !instanceDetached {
+			klog.V(2).Infof("Volume %s is still visible in instance %s attached volumes", volumeID, instanceID)
+			return false, nil
+		}
+
+		klog.V(2).Infof("Volume %s is successfully detached from instance %s", volumeID, instanceID)
+		return true, nil
 	})
 
 	if wait.Interrupted(err) {
 		err = fmt.Errorf("Volume %q failed to detach within the alloted time", volumeID)
+		klog.Errorf("Volume detachment timeout: %v", err)
 	}
 
 	return err
