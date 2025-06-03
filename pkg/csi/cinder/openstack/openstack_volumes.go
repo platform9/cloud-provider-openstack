@@ -41,11 +41,11 @@ const (
 	operationFinishInitDelay = 1 * time.Second
 	operationFinishFactor    = 1.1
 	operationFinishSteps     = 10
-	diskAttachInitDelay      = 6 * time.Second
-	diskAttachFactor         = 1.2
+	diskAttachInitDelay      = 30 * time.Second // increased from 10s to 30s
+	diskAttachFactor         = 1.5              // increased from 1.2 to 1.5
 	diskAttachSteps          = 15
-	diskDetachInitDelay      = 6 * time.Second
-	diskDetachFactor         = 1.2
+	diskDetachInitDelay      = 30 * time.Second // increased from 10s to 30s
+	diskDetachFactor         = 1.5              // increased from 1.2 to 1.5
 	diskDetachSteps          = 15
 	volumeDescription        = "Created by OpenStack Cinder CSI driver"
 )
@@ -268,35 +268,45 @@ func (os *OpenStack) WaitDiskAttached(instanceID string, volumeID string) error 
 		Steps:    diskAttachSteps,
 	}
 
+	var lastErr error
+	var retryCount int
 	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
+		retryCount++
+		currentTime := time.Now().Format(time.RFC3339)
 		// Check volume attachment status using existing function
 		volumeAttached, err := os.diskIsAttached(instanceID, volumeID)
 		if err != nil {
-			klog.Errorf("Failed to check volume %s attachment status for instance %s: %v", volumeID, instanceID, err)
-			return false, err
+			lastErr = fmt.Errorf("[%s] Attempt %d: Failed to check volume %s attachment status for instance %s: %v", currentTime, retryCount, volumeID, instanceID, err)
+			klog.Errorf(lastErr.Error())
+			return false, lastErr
 		}
 		if !volumeAttached {
-			klog.V(2).Infof("Volume %s is not yet attached to instance %s", volumeID, instanceID)
-			return false, nil
+			lastErr = fmt.Errorf("[%s] Attempt %d: Volume %s is not yet attached to instance %s", currentTime, retryCount, volumeID, instanceID)
+			klog.V(2).Infof(lastErr.Error())
+			return false, lastErr
 		}
 
 		// Check Nova instance attachment status
 		instanceAttached, err := os.isVolumeAttachedToInstance(instanceID, volumeID)
 		if err != nil {
-			klog.Errorf("Failed to check instance %s attachment status for volume %s: %v", instanceID, volumeID, err)
-			return false, err
+			lastErr = fmt.Errorf("[%s] Attempt %d: Failed to check instance %s attachment status for volume %s: %v", currentTime, retryCount, instanceID, volumeID, err)
+			klog.Errorf(lastErr.Error())
+			return false, lastErr
 		}
 		if !instanceAttached {
-			klog.V(2).Infof("Volume %s is not yet visible in instance %s attached volumes", volumeID, instanceID)
-			return false, nil
+			lastErr = fmt.Errorf("[%s] Attempt %d: Volume %s is not yet visible in instance %s attached volumes", currentTime, retryCount, volumeID, instanceID)
+			klog.V(2).Infof(lastErr.Error())
+			return false, lastErr
 		}
 
-		klog.V(2).Infof("Volume %s is successfully attached to instance %s", volumeID, instanceID)
+		klog.V(2).Infof("[%s] Volume %s is successfully attached to instance %s after %d retries", currentTime, volumeID, instanceID, retryCount)
 		return true, nil
 	})
 
 	if wait.Interrupted(err) {
-		err = fmt.Errorf("Volume %q failed to be attached within the alloted time", volumeID)
+		currentTime := time.Now().Format(time.RFC3339)
+		err = fmt.Errorf("[%s] Volume %q failed to be attached within the alloted time after %d retries. Last error: %v",
+			currentTime, volumeID, retryCount, lastErr)
 		klog.Errorf("Volume attachment timeout: %v", err)
 	}
 
@@ -399,35 +409,44 @@ func (os *OpenStack) WaitDiskDetached(instanceID string, volumeID string) error 
 		Steps:    diskDetachSteps,
 	}
 
+	var lastErr error
+	var retryCount int
 	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
+		retryCount++
+		currentTime := time.Now().Format(time.RFC3339)
 		// Check volume detachment status using existing function
 		volumeAttached, err := os.diskIsAttached(instanceID, volumeID)
 		if err != nil {
-			klog.Errorf("Failed to check volume %s detachment status for instance %s: %v", volumeID, instanceID, err)
-			return false, err
+			lastErr = fmt.Errorf("[%s] Attempt %d: Failed to check volume %s detachment status for instance %s: %v", currentTime, retryCount, volumeID, instanceID, err)
+			klog.Errorf(lastErr.Error())
+			return false, lastErr
 		}
 		if volumeAttached {
-			klog.V(2).Infof("Volume %s is still attached to instance %s", volumeID, instanceID)
-			return false, nil
+			lastErr = fmt.Errorf("[%s] Attempt %d: Volume %s is still attached to instance %s", currentTime, retryCount, volumeID, instanceID)
+			klog.V(2).Infof(lastErr.Error())
+			return false, lastErr
 		}
 
 		// Check Nova instance detachment status
 		instanceDetached, err := os.isVolumeDetachedFromInstance(instanceID, volumeID)
 		if err != nil {
-			klog.Errorf("Failed to check instance %s detachment status for volume %s: %v", instanceID, volumeID, err)
-			return false, err
+			lastErr = fmt.Errorf("[%s] Attempt %d: Failed to check instance %s detachment status for volume %s: %v", currentTime, retryCount, instanceID, volumeID, err)
+			klog.Errorf(lastErr.Error())
+			return false, lastErr
 		}
 		if !instanceDetached {
-			klog.V(2).Infof("Volume %s is still visible in instance %s attached volumes", volumeID, instanceID)
-			return false, nil
+			lastErr = fmt.Errorf("[%s] Attempt %d: Volume %s is still visible in instance %s attached volumes", currentTime, retryCount, volumeID, instanceID)
+			klog.V(2).Infof(lastErr.Error())
+			return false, lastErr
 		}
 
-		klog.V(2).Infof("Volume %s is successfully detached from instance %s", volumeID, instanceID)
+		klog.V(2).Infof("[%s] Volume %s is successfully detached from instance %s after %d retries", currentTime, volumeID, instanceID, retryCount)
 		return true, nil
 	})
 
 	if wait.Interrupted(err) {
-		err = fmt.Errorf("Volume %q failed to detach within the alloted time", volumeID)
+		currentTime := time.Now().Format(time.RFC3339)
+		err = fmt.Errorf("[%s] Volume %q failed to detach within the alloted time after %d retries. Last error: %v", currentTime, volumeID, retryCount, lastErr)
 		klog.Errorf("Volume detachment timeout: %v", err)
 	}
 
