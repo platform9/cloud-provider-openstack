@@ -17,18 +17,21 @@ limitations under the License.
 package client
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/extensions/trusts"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
-	"github.com/gophercloud/utils/client"
 	"github.com/gophercloud/utils/openstack/clientconfig"
 
 	"k8s.io/apimachinery/pkg/util/net"
@@ -243,6 +246,89 @@ func ReadClouds(authOpts *AuthOpts) error {
 	return nil
 }
 
+// LoggingTransport is a custom transport that logs requests and responses
+type LoggingTransport struct {
+	Transport http.RoundTripper
+	Region    string
+	Cluster   string
+}
+
+// RoundTrip implements the http.RoundTripper interface
+func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Add X-Request-ID header
+	reqID := uuid.New().String()
+	req.Header.Set("X-Request-ID", reqID)
+
+	token := os.Getenv("API_TOKEN")
+	if token == "" {
+		return nil, fmt.Errorf("API token not set")
+	}
+	clusterName := os.Getenv("CLUSTER_NAME")
+	if clusterName == "" {
+		return nil, fmt.Errorf("CLUSTER_NAME not set")
+	}
+	req.Header.Set("X-Cluster", clusterName)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Request-ID", reqID)
+	// Add region as header if not already present
+	if t.Region != "" && req.Header.Get("X-Region") == "" {
+		req.Header.Set("X-Region", t.Region)
+	}
+
+	// Extract volumeID from URL path and add as header only for operations that have a volumeID
+	// Skip for POST requests (like volume creation) where volumeID doesn't exist yet
+	if req.Method != "POST" {
+		pathParts := strings.Split(req.URL.Path, "/")
+		for i, part := range pathParts {
+			if part == "volumes" && i+1 < len(pathParts) {
+				volumeID := pathParts[i+1]
+				if volumeID != "" {
+					req.Header.Set("X-Volume-ID", volumeID)
+				}
+				break
+			}
+		}
+	}
+
+	// Log request
+	var reqBody []byte
+	var err error
+	if req.Body != nil {
+		reqBody, err = io.ReadAll(req.Body)
+		if err != nil {
+			klog.Errorf("Failed to read request body: %v", err)
+			return nil, err
+		}
+		req.Body = io.NopCloser(bytes.NewBuffer(reqBody))
+	}
+
+	klog.Infof("Request [%s] %s %s\nHeaders: %v\nBody: %s",
+		reqID, req.Method, req.URL, req.Header, string(reqBody))
+
+	// Make the request
+	resp, err := t.Transport.RoundTrip(req)
+	if err != nil {
+		klog.Errorf("Request [%s] failed: %v", reqID, err)
+		return nil, err
+	}
+
+	// Log response
+	var respBody []byte
+	if resp.Body != nil {
+		respBody, err = io.ReadAll(resp.Body)
+		if err != nil {
+			klog.Errorf("Failed to read response body: %v", err)
+			return nil, err
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(respBody))
+	}
+
+	klog.Infof("Response [%s] %s\nStatus: %s\nHeaders: %v\nBody: %s",
+		reqID, req.URL, resp.Status, resp.Header, string(respBody))
+
+	return resp, nil
+}
+
 // NewOpenStackClient creates a new instance of the openstack client
 func NewOpenStackClient(cfg *AuthOpts, userAgent string, extraUserAgent ...string) (*gophercloud.ProviderClient, error) {
 	provider, err := openstack.NewClient(cfg.AuthURL)
@@ -289,13 +375,13 @@ func NewOpenStackClient(cfg *AuthOpts, userAgent string, extraUserAgent ...strin
 		config.Certificates = []tls.Certificate{cert}
 	}
 
-	provider.HTTPClient.Transport = net.SetOldTransportDefaults(&http.Transport{TLSClientConfig: config})
+	// Create base transport
+	baseTransport := net.SetOldTransportDefaults(&http.Transport{TLSClientConfig: config})
 
-	if klog.V(6).Enabled() {
-		provider.HTTPClient.Transport = &client.RoundTripper{
-			Rt:     provider.HTTPClient.Transport,
-			Logger: &Logger{},
-		}
+	// Wrap with logging transport
+	provider.HTTPClient.Transport = &LoggingTransport{
+		Transport: baseTransport,
+		Region:    cfg.Region,
 	}
 
 	if cfg.TrustID != "" {
